@@ -3,6 +3,24 @@ from abc import ABC
 import torch
 
 
+def loss_fn(y, theta, signs):
+    prob = torch.sigmoid(torch.square(y).sum(dim=1) - theta)
+    loss = -torch.log(prob) * signs
+    # loss = torch.square(y).sum(dim=1) - theta
+    # loss = - loss * signs
+    loss = loss.mean()
+    return loss
+
+
+def alternative_loss_fn(y, theta, signs):
+    logits = torch.square(y).sum(dim=1) - theta
+    logits = -logits * signs
+    prob = torch.exp(logits)
+    loss = torch.log(1 + prob)
+    loss = loss.mean()
+    return loss
+
+
 class BaseFFLayer(torch.nn.Module, ABC):
     def ff_train(self, input_tensor: torch.Tensor, signs: torch.Tensor, theta: float):
         raise NotImplementedError
@@ -14,10 +32,14 @@ class BaseFFLayer(torch.nn.Module, ABC):
 class FFLayer(BaseFFLayer):
     """Layer wrapper for efficient forward-forward layers.
     """
-    def __init__(self, layer, optimizer_name: str, optimizer_kwargs: dict):
+    def __init__(self, layer, optimizer_name: str, optimizer_kwargs: dict, loss_fn_name: str = "loss_fn"):
         super().__init__()
         self.layer = layer
         self.optimizer = getattr(torch.optim, optimizer_name)(layer.parameters(), **optimizer_kwargs)
+        if loss_fn_name == "loss_fn":
+            self.loss_fn = loss_fn
+        elif loss_fn_name == "alternative_loss_fn":
+            self.loss_fn = alternative_loss_fn
 
     def forward(self, x):
         return self.layer(x)
@@ -26,9 +48,7 @@ class FFLayer(BaseFFLayer):
         """Train the layer with the given target.
         """
         y = self(input_tensor.detach())
-        prob = torch.sigmoid(torch.square(y).sum(dim=1) - theta)
-        loss = -torch.log(prob) * signs
-        loss = loss.sum()
+        loss = self.loss_fn(y, theta, signs)
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
@@ -64,7 +84,7 @@ class FFNormalization(BaseFFLayer):
 class LinearReLU(torch.nn.Module):
     def __init__(self, in_features, out_features):
         super().__init__()
-        self.linear = torch.nn.Linear(in_features, out_features)
+        self.linear = torch.nn.Linear(in_features, out_features, bias=True)
         self.relu = torch.nn.ReLU()
 
     def forward(self, x):
@@ -72,11 +92,11 @@ class LinearReLU(torch.nn.Module):
 
 
 class FCNetFF(BaseFFLayer):
-    def __init__(self, layer_sizes: list, optimizer_name: str, optimizer_kwargs: dict):
+    def __init__(self, layer_sizes: list, optimizer_name: str, optimizer_kwargs: dict, loss_fn_name: str = "loss_fn"):
         super().__init__()
         self.layers = torch.nn.ModuleList()
         for i in range(len(layer_sizes) - 1):
-            self.layers.append(FFLayer(LinearReLU(layer_sizes[i], layer_sizes[i + 1]), optimizer_name, optimizer_kwargs))
+            self.layers.append(FFLayer(LinearReLU(layer_sizes[i], layer_sizes[i + 1]), optimizer_name, optimizer_kwargs, loss_fn_name))
             if i < len(layer_sizes) - 2:
                 self.layers.append(FFNormalization())
 

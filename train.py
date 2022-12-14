@@ -15,6 +15,7 @@ def train(
         epochs: int,
         batch_size: int,
         theta: float,
+        loss_fn_name: str
 ):
     """Train FCNetFF using MNISt dataset.
     """
@@ -36,7 +37,7 @@ def train(
         batch_size=1, shuffle=True)
 
     # Define model
-    model = FCNetFF([input_len] + [hidden_size] * n_layers, optimizer_name, {"lr": lr})
+    model = FCNetFF([input_len] + [hidden_size] * n_layers, optimizer_name, {"lr": lr}, loss_fn_name)
     model.to(device)
     label_injector = LabelsInjector(datasets.MNIST.classes)
 
@@ -46,7 +47,7 @@ def train(
         for batch_idx, (data, target) in enumerate(train_loader):
             input_data = label_injector.inject_train(data, target)
             input_data = input_data.to(device)
-            signs = torch.cat([torch.ones(batch_size, device=device), - torch.ones(batch_size, device=device)])
+            signs = torch.cat([torch.ones(input_data.shape[0] // 2, device=device), - torch.ones(input_data.shape[0] // 2, device=device)])
             model.ff_train(input_data, signs, theta)
             if batch_idx % 100 == 0:
                 print('Train Epoch: {} [{}/{} ({:.0f}%)]'.format(
@@ -59,6 +60,7 @@ def train(
             for data, target in test_loader:
                 input_data = label_injector.inject_eval(data)
                 input_data = input_data.to(device)
+                target = target.to(device)
                 _, prob = model.positive_eval(input_data, theta)
                 pred = prob.argmax(dim=0)
                 correct += pred == target
@@ -90,8 +92,9 @@ if __name__ == '__main__':
                         help='number of epochs')
     parser.add_argument('--batch_size', type=int, default=64,
                         help='batch size')
-    parser.add_argument('--theta', type=float, default=-1.,
+    parser.add_argument('--theta', type=float, default=2.,
                         help='theta parameter')
+    parser.add_argument("--loss_fn_name", type=str, default="loss_fn")
 
     args = parser.parse_args()
     train(**vars(args))
