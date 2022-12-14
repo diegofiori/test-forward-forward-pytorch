@@ -25,7 +25,9 @@ class LabelsInjector:
         )
         positive_images = torch.cat([input_image.reshape(bs, -1), injecting_labels], dim=1)
         negative_images = torch.cat([input_image.reshape(bs, -1), negative_injecting_labels], dim=1)
-        return torch.cat([positive_images, negative_images], dim=0)
+        images = torch.cat([positive_images, negative_images], dim=0)
+        signs = torch.cat([torch.ones(bs), -torch.ones(bs)], dim=0)
+        return images, signs
 
     def inject_eval(self, input_image: torch.Tensor):
         # input image is expected to have batch size 1

@@ -1,6 +1,9 @@
 from abc import ABC
 
 import torch
+import torch.utils.data
+
+from efficientff.utils import ProgressiveTrainingDataset
 
 
 def loss_fn(y, theta, signs):
@@ -91,9 +94,14 @@ class LinearReLU(torch.nn.Module):
         return self.relu(self.linear(x))
 
 
-class FCNetFF(BaseFFLayer):
-    def __init__(self, layer_sizes: list, optimizer_name: str, optimizer_kwargs: dict, loss_fn_name: str = "loss_fn"):
+class FCNetFFProgressive(BaseFFLayer):
+    """FCNet trained using forward-forward algorithm. The network is trained
+    in a progressive manner, i.e. the first layer is trained, then the
+    second layer, and so on.
+    """
+    def __init__(self, layer_sizes: list, optimizer_name: str, optimizer_kwargs: dict, epochs: int, loss_fn_name: str = "loss_fn"):
         super().__init__()
+        self.epochs = epochs
         self.layers = torch.nn.ModuleList()
         for i in range(len(layer_sizes) - 1):
             self.layers.append(FFLayer(LinearReLU(layer_sizes[i], layer_sizes[i + 1]), optimizer_name, optimizer_kwargs, loss_fn_name))
@@ -104,6 +112,25 @@ class FCNetFF(BaseFFLayer):
         for layer in self.layers:
             x = layer(x)
         return x
+
+    def progressive_train(self, dl: torch.utils.data.DataLoader,  theta: float):
+        """Train the network in a progressive manner.
+        """
+        print("Training the network in a progressive manner.")
+        for i, layer in enumerate(self.layers):
+            for epoch in range(self.epochs):
+                for j, (data, signs) in enumerate(dl):
+                    layer.ff_train(data, signs, theta)
+                    if j % 100 == 0:
+                        print(f"Epoch: {epoch}, Batch: {j}, Layer: {i}")
+                if epoch % 10 == 0 and epoch > 0:
+                    print(f"Epoch {epoch} of layer {i} done.")
+            print(f"Finished training layer {i} / {len(self.layers)}.")
+            # create a new dataloader for the next layer
+            dataset = ProgressiveTrainingDataset(((layer(x), sign) for x, sign in dl))
+            batch_size = dl.batch_size
+            dl = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False)
+        print("Finished training the network.")
 
     def ff_train(self, input_tensor: torch.Tensor, signs: torch.Tensor, theta: float):
         """Train the network with the given target.
@@ -116,7 +143,8 @@ class FCNetFF(BaseFFLayer):
         """Evaluate the network with the given input and theta.
         """
         accumulated_goodness = torch.zeros(input_tensor.shape[0], device=input_tensor.device)
-        for layer in self.layers:
+        for i, layer in enumerate(self.layers):
             input_tensor, goodness = layer.positive_eval(input_tensor, theta)
-            accumulated_goodness += goodness
+            if i > 0:
+                accumulated_goodness += goodness
         return input_tensor, torch.sigmoid(accumulated_goodness)
