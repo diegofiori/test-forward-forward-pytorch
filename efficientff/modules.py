@@ -250,6 +250,12 @@ class RecurrentFFLayer(BaseFFLayer):
         loss.backward()
         self.optimizer.step()
         return new_x, (goodness_pos, goodness_neg)
+    
+    @torch.no_grad()
+    def positive_eval(self, x_prev: torch.Tensor, x_same: torch.Tensor, x_next: torch.Tensor, theta: float):
+        new_x = self(x_prev, x_same, x_next)
+        goodness = self.loss_fn(new_x, theta, 1)[1]
+        return new_x, goodness
 
 
 class RecurrentProjectionFFLayer(BaseFFLayer):
@@ -278,6 +284,12 @@ class RecurrentProjectionFFLayer(BaseFFLayer):
         loss.backward()
         self.optimizer.step()
         return new_x, (goodness_pos, goodness_neg)
+    
+    @torch.no_grad()
+    def positive_eval(self, x: torch.Tensor, theta: float):
+        new_x = self(x)
+        goodness = self.loss_fn(new_x, theta, 1)[1]
+        return new_x, goodness
 
 
 class RecurrentFCNetFF(BaseFFLayer):
@@ -293,6 +305,7 @@ class RecurrentFCNetFF(BaseFFLayer):
             self.layers.append(RecurrentFFLayer(NormLinearReLU(layer_sizes[i], layer_sizes[i + 1]), optimizer_name, optimizer_kwargs, loss_fn_name))
         self.proj_y = RecurrentProjectionFFLayer(layer_sizes[-1], layer_sizes[-2], optimizer_name, optimizer_kwargs, loss_fn_name)
         self.softmax = torch.nn.Softmax(dim=1)
+        self.num_labels = layer_sizes[-1]
     
     @property
     def device(self):
@@ -333,15 +346,82 @@ class RecurrentFCNetFF(BaseFFLayer):
         return new_states
         
 
-    def ff_train(self, input_tensor: torch.Tensor, signs: torch.Tensor, theta: float):
+    def ff_train(self, input_tensor: torch.Tensor, labels: torch.Tensor, theta: float):
         """Train the network with the given target.
         """
-        raise NotImplementedError
+        with torch.no_grad():
+            states, neg_samples = self.bottom_up(input_tensor, labels)
+            neg_states, _ = self.bottom_up(input_tensor, neg_samples)
+            states = [torch.cat([s, ns], dim=0) for s, ns in zip(states, neg_states)]
+            signs = torch.cat([
+                torch.ones(input_tensor.shape[0], device=self.device), 
+                -torch.ones(input_tensor.shape[0], device=self.device)
+            ], dim=0)
+            input_tensor = torch.cat([input_tensor, input_tensor], dim=0)
+        # states have been created, now we can train the network
+        x_proj, accumulated_goodness = self.projector.ff_train(input_tensor, signs, theta)
+        for _ in range(self.time_steps):
+            new_states = []
+            x = x_proj
+            for j, layer in enumerate(self.layers):
+                if j < len(self.layers) - 1:
+                    next_state = states[j + 2]
+                else:
+                    next_state = self.proj_y(states[j + 2])
+                new_states.append(x)
+                x, goodnesses = layer.ff_train(states[j], states[j+1], next_state, signs, theta)
+                accumulated_goodness[0] += goodnesses[0]
+                accumulated_goodness[1] += goodnesses[1]
+            new_states.append(x)
+            with torch.no_grad():
+                x_ = states[-2][torch.where(signs == -1)]
+                real_y = states[-1][torch.where(signs == 1)]
+                x_[torch.arange(x_.shape[0]), torch.argmax(real_y, dim=1)] = -1e6
+                y = self.softmax(x_)
+                cumulative_y = torch.cumsum(y, dim=1)
+                neg_samples = torch.argmax(cumulative_y > torch.rand(x_.shape[0]), dim=1)
+                neg_samples = torch.functional.F.one_hot(neg_samples, num_classes=x_.shape[1])
+                # replace just negative samples 
+                next_labels = states[-1].clone()
+                next_labels[torch.where(signs == -1)] = neg_samples
+                new_states.append(next_labels)
+            states = new_states
+        accumulated_goodness[0] /= self.time_steps * len(self.layers) + 1
+        accumulated_goodness[1] /= self.time_steps * len(self.layers) + 1
+        return [t[:input_tensor.shape[0]//2] for t in states], accumulated_goodness
 
+    @torch.no_grad()
     def positive_eval(self, input_tensor: torch.Tensor, theta: float):
         """Evaluate the network with the given input and theta.
         """
-        raise NotImplementedError("Recurrent networks do not support positive_eval.")
+        labels = torch.arange(0, self.num_labels, device=self.device)
+        labels = torch.functional.F.one_hot(labels, num_classes=self.num_labels)
+        original_bs = input_tensor.shape[0]
+        input_tensor = input_tensor.unsqueeze(1).repeat(1, self.num_labels, 1).reshape(-1, input_tensor.shape[-1])
+        labels = labels.unsqueeze(0).repeat(original_bs, 1, 1).reshape(-1, labels.shape[-1])
+        
+        states, _ = self.bottom_up(input_tensor, labels)
+        x_proj, _ = self.projector.positive_eval(input_tensor, theta)
+        accumulated_goodness = torch.zeros(input_tensor.shape[0], device=self.device)
+
+        for time_step in range(self.test_time_steps):
+            new_states = []
+            x = x_proj
+            for j, layer in enumerate(self.layers):
+                if j < len(self.layers) - 1:
+                    next_state = states[j + 2]
+                else:
+                    next_state = self.proj_y(states[j + 2])
+                new_states.append(x)
+                x, goodnesses = layer.positive_eval(states[j], states[j+1], next_state, theta)
+                if time_step in self.storable_time_steps:
+                    accumulated_goodness += goodnesses
+            new_states.append(x)
+            new_states.append(states[-1])
+            states = new_states
+        accumulated_goodness = accumulated_goodness.reshape(original_bs, self.num_labels)
+        prediction = torch.argmax(accumulated_goodness, dim=1)
+        return prediction, accumulated_goodness
         
         
             
