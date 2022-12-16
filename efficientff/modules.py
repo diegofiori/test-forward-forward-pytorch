@@ -108,7 +108,7 @@ class FFNormalization(BaseFFLayer):
 
     def ff_train(self, input_tensor: torch.Tensor, signs: torch.Tensor, theta: float):
         with torch.no_grad():
-            output = self(input_tensor)
+            output = self()
         return output, None
 
     def positive_eval(self, input_tensor: torch.Tensor, theta: float):
@@ -240,7 +240,7 @@ class RecurrentFFLayer(BaseFFLayer):
         signs: torch.Tensor, 
         theta: float,
     ):
-        new_x = self(x_prev.detach(), x_same, x_next)
+        new_x = self(x_prev.detach(), x_same.detach(), x_next.detach())
         y_pos = new_x[signs == 1]
         y_neg = new_x[signs == -1]
         loss_pos, goodness_pos = self.loss_fn(y_pos, theta, 1)
@@ -249,7 +249,7 @@ class RecurrentFFLayer(BaseFFLayer):
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
-        return new_x, (goodness_pos, goodness_neg)
+        return new_x, [goodness_pos, goodness_neg]
     
     @torch.no_grad()
     def positive_eval(self, x_prev: torch.Tensor, x_same: torch.Tensor, x_next: torch.Tensor, theta: float):
@@ -283,8 +283,47 @@ class RecurrentProjectionFFLayer(BaseFFLayer):
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
-        return new_x, (goodness_pos, goodness_neg)
+        return new_x, [goodness_pos, goodness_neg]
     
+    @torch.no_grad()
+    def positive_eval(self, x: torch.Tensor, theta: float):
+        new_x = self(x)
+        goodness = self.loss_fn(new_x, theta, 1)[1]
+        return new_x, goodness
+
+
+class RecurrentProjectedSoftmaxFFLayer(BaseFFLayer):
+    def __init__(self, input_size: int, output_size: int, optimizer_name: str, optimizer_kwargs: dict, loss_fn_name: str):
+        super().__init__()
+        self.loss_fn = eval(loss_fn_name)
+        self.norm = FFNormalization()
+        self.linear = torch.nn.Linear(input_size, output_size)
+        self.softmax = torch.nn.Softmax(dim=1)
+        self.optimizer = getattr(torch.optim, optimizer_name)(self.linear.parameters(), **optimizer_kwargs)
+
+    def forward(self, x: torch.Tensor):
+        x = self.norm(x)
+        x = self.linear(x)
+        x = self.softmax(x)
+        return x
+
+    def ff_train(
+        self,
+        x: torch.Tensor,
+        signs: torch.Tensor,
+        theta: float,
+    ):
+        new_x = self(x.detach())
+        y_pos = new_x[signs == 1]
+        y_neg = new_x[signs == -1]
+        loss_pos, goodness_pos = self.loss_fn(y_pos, theta, 1)
+        loss_neg, goodness_neg = self.loss_fn(y_neg, theta, -1)
+        loss = loss_pos + loss_neg
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+        return new_x, [goodness_pos, goodness_neg]
+
     @torch.no_grad()
     def positive_eval(self, x: torch.Tensor, theta: float):
         new_x = self(x)
@@ -295,16 +334,18 @@ class RecurrentProjectionFFLayer(BaseFFLayer):
 class RecurrentFCNetFF(BaseFFLayer):
     """Recurrent FCNet trained using forward-forward algorithm.
     """
-    def __init__(self, layer_sizes: list, optimizer_name: str, optimizer_kwargs: dict, epochs: int, loss_fn_name: str = "loss_fn"):
+    def __init__(self, layer_sizes: list, optimizer_name: str, optimizer_kwargs: dict, loss_fn_name: str = "loss_fn"):
         super().__init__()
-        self.epochs = epochs
+        self.time_steps = 10
+        self.test_time_steps = 8
+        self.storable_time_steps = [2, 3, 4]
         self.states = []
         self.layers = torch.nn.ModuleList()
         self.projector = RecurrentProjectionFFLayer(layer_sizes[0], layer_sizes[1], optimizer_name, optimizer_kwargs, loss_fn_name)
         for i in range(1, len(layer_sizes) - 1):
-            self.layers.append(RecurrentFFLayer(NormLinearReLU(layer_sizes[i], layer_sizes[i + 1]), optimizer_name, optimizer_kwargs, loss_fn_name))
+            self.layers.append(RecurrentFFLayer(layer_sizes[i], optimizer_name, optimizer_kwargs, loss_fn_name))
         self.proj_y = RecurrentProjectionFFLayer(layer_sizes[-1], layer_sizes[-2], optimizer_name, optimizer_kwargs, loss_fn_name)
-        self.softmax = torch.nn.Softmax(dim=1)
+        self.softmax = RecurrentProjectedSoftmaxFFLayer(layer_sizes[-2], layer_sizes[-1], optimizer_name, optimizer_kwargs, loss_fn_name)
         self.num_labels = layer_sizes[-1]
     
     @property
@@ -326,8 +367,8 @@ class RecurrentFCNetFF(BaseFFLayer):
         x_proj_[torch.arange(x_proj.shape[0]), y_arg] = - 1e6
         neg_prob = self.softmax(x_proj_)
         cumulative_neg_prob = torch.cumsum(neg_prob, dim=1)
-        neg_samples = torch.argmax(cumulative_neg_prob > torch.rand(x.shape[0]), dim=1)
-        neg_samples = torch.functional.F.one_hot(neg_samples, num_classes=x.shape[1])
+        neg_samples = torch.argmax(1.* (cumulative_neg_prob > torch.rand(x.shape[0], 1)), dim=1)
+        neg_samples = torch.functional.F.one_hot(neg_samples, num_classes=self.num_labels)
         return states, neg_samples
 
     def forward(self, x: torch.Tensor, prev_states: List[torch.Tensor]):
@@ -337,14 +378,13 @@ class RecurrentFCNetFF(BaseFFLayer):
             if i < len(self.layers) - 1:
                 next_state = prev_states[i + 2]
             else:
-                next_state = self.proj_y(prev_states[i + 2])
+                next_state = self.proj_y(prev_states[i + 2].float())
             new_states.append(x_proj)
             x_proj = layer(prev_states[i], prev_states[i+1], next_state)
         new_states.append(x_proj)
         y = self.softmax(x_proj)
         new_states.append(y)
         return new_states
-        
 
     def ff_train(self, input_tensor: torch.Tensor, labels: torch.Tensor, theta: float):
         """Train the network with the given target.
@@ -367,7 +407,7 @@ class RecurrentFCNetFF(BaseFFLayer):
                 if j < len(self.layers) - 1:
                     next_state = states[j + 2]
                 else:
-                    next_state = self.proj_y(states[j + 2])
+                    next_state = self.proj_y(states[j + 2].float())
                 new_states.append(x)
                 x, goodnesses = layer.ff_train(states[j], states[j+1], next_state, signs, theta)
                 accumulated_goodness[0] += goodnesses[0]
@@ -379,8 +419,8 @@ class RecurrentFCNetFF(BaseFFLayer):
                 x_[torch.arange(x_.shape[0]), torch.argmax(real_y, dim=1)] = -1e6
                 y = self.softmax(x_)
                 cumulative_y = torch.cumsum(y, dim=1)
-                neg_samples = torch.argmax(cumulative_y > torch.rand(x_.shape[0]), dim=1)
-                neg_samples = torch.functional.F.one_hot(neg_samples, num_classes=x_.shape[1])
+                neg_samples = torch.argmax(1. * (cumulative_y > torch.rand(x_.shape[0], 1)), dim=1)
+                neg_samples = torch.functional.F.one_hot(neg_samples, num_classes=self.num_labels)
                 # replace just negative samples 
                 next_labels = states[-1].clone()
                 next_labels[torch.where(signs == -1)] = neg_samples
@@ -388,7 +428,9 @@ class RecurrentFCNetFF(BaseFFLayer):
             states = new_states
         accumulated_goodness[0] /= self.time_steps * len(self.layers) + 1
         accumulated_goodness[1] /= self.time_steps * len(self.layers) + 1
-        return [t[:input_tensor.shape[0]//2] for t in states], accumulated_goodness
+        with torch.no_grad():
+            states = [t[:input_tensor.shape[0]//2] for t in states]
+        return states, accumulated_goodness
 
     @torch.no_grad()
     def positive_eval(self, input_tensor: torch.Tensor, theta: float):
@@ -411,7 +453,7 @@ class RecurrentFCNetFF(BaseFFLayer):
                 if j < len(self.layers) - 1:
                     next_state = states[j + 2]
                 else:
-                    next_state = self.proj_y(states[j + 2])
+                    next_state = self.proj_y(states[j + 2].float())
                 new_states.append(x)
                 x, goodnesses = layer.positive_eval(states[j], states[j+1], next_state, theta)
                 if time_step in self.storable_time_steps:
