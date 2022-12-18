@@ -7,11 +7,12 @@ class ProgressiveTrainingDataset(torch.utils.data.Dataset):
     """Dataset for progressive training.
     """
     def __init__(self, dataset_generator: Generator):
-        self.internal_dataset = [
-            batch
-            for data, sign in dataset_generator
-            for batch in zip(data, sign)
-        ]
+        with torch.no_grad():
+            self.internal_dataset = [
+                batch
+                for data, sign in dataset_generator
+                for batch in zip(data, sign)
+            ]
 
     def __getitem__(self, index):
         return self.internal_dataset[index]

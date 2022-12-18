@@ -8,8 +8,8 @@ from pathlib import Path
 def profile_per_num_layers(n_layers: int):
     hidden_size = 2000
     lr = 0.03
-    # device = "cuda:0"
-    device = "cpu"
+    device = "cuda:0"
+    # device = "cpu"
     epochs = 1
     batch_size = 5000
     theta = 2.0
@@ -134,7 +134,7 @@ def profile_per_num_layers(n_layers: int):
 
 def main(max_layers: int):
     all_results = {}
-    for n_layers in range(2, max_layers + 1):
+    for n_layers in range(2, max_layers + 1, 5):
         profile_result = profile_per_num_layers(n_layers)
         all_results[n_layers] = profile_result
     with open("results.json", "w") as f:
