@@ -1,3 +1,5 @@
+import resource
+
 import torch
 import torch.utils.data
 from torchvision import datasets, transforms
@@ -35,7 +37,8 @@ def train(
         epochs: int,
         batch_size: int,
         theta: float,
-        loss_fn_name: str
+        loss_fn_name: str,
+        save_memory_profile: str = None,
 ):
     """Train FCNetFF using MNISt dataset.
     """
@@ -69,8 +72,13 @@ def train(
         correct, len(test_loader.dataset),
         100. * correct / len(test_loader.dataset)))
 
-    # save model
-    torch.save(model.state_dict(), "model.pt")
+    if save_memory_profile is not None:
+        if torch.cuda.is_available() and "cuda" in device:
+            memory_allocated = torch.cuda.max_memory_allocated(device=device)
+        else:
+            memory_allocated = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        with open(save_memory_profile, "w") as f:
+            f.write(f"{memory_allocated}")
 
 
 if __name__ == '__main__':
@@ -94,6 +102,6 @@ if __name__ == '__main__':
     parser.add_argument('--theta', type=float, default=2.,
                         help='theta parameter')
     parser.add_argument("--loss_fn_name", type=str, default="loss_fn")
-
+    parser.add_argument("--save_memory_profile", type=str, default=None)
     args = parser.parse_args()
     train(**vars(args))

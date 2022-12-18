@@ -91,6 +91,7 @@ class FFLayer(BaseFFLayer):
         y[torch.where(signs == -1)] = y_neg
         return y.detach(), separation
 
+    @torch.no_grad()
     def positive_eval(self, input_tensor: torch.Tensor, theta: float):
         """Evaluate the layer with the given input and theta.
         """
@@ -111,6 +112,7 @@ class FFNormalization(BaseFFLayer):
             output = self()
         return output, None
 
+    @torch.no_grad()
     def positive_eval(self, input_tensor: torch.Tensor, theta: float):
         with torch.no_grad():
             output = self(input_tensor)
@@ -194,6 +196,7 @@ class FCNetFFProgressive(BaseFFLayer):
                 accumulated_separation[1] += separation[1]
         return input_tensor, accumulated_separation
 
+    @torch.no_grad()
     def positive_eval(self, input_tensor: torch.Tensor, theta: float):
         """Evaluate the network with the given input and theta.
         """

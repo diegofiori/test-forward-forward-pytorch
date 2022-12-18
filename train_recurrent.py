@@ -1,3 +1,5 @@
+import resource
+
 import torch
 import torch.utils.data
 from torchvision import datasets, transforms
@@ -24,7 +26,17 @@ def get_dataloader(batch_size: int):
     return train_loader, test_loader
 
 
-def train(n_layers: int, hidden_size: int, epochs: int, batch_size: int, loss_fn: str, lr: float, theta: float, device: str):
+def train(
+        n_layers: int,
+        hidden_size: int,
+        epochs: int,
+        batch_size: int,
+        loss_fn: str,
+        lr: float,
+        theta: float,
+        device: str,
+        save_memory_profile: str = None
+):
     optimizer_name = "Adam"
     optimizer_args = {"lr": lr}
     input_len = 28 * 28  # MNIST image size + number of classes
@@ -56,6 +68,13 @@ def train(n_layers: int, hidden_size: int, epochs: int, batch_size: int, loss_fn
                 pred, _ = model.positive_eval(data, theta)
                 correct += pred.eq(target.view_as(pred)).sum().item()
         print(f"Test accuracy: {correct} / 10000 ({correct / 10000 * 100}%)")
+    if save_memory_profile is not None:
+        if torch.cuda.is_available() and "cuda" in device:
+            memory_allocated = torch.cuda.max_memory_allocated(device=device)
+        else:
+            memory_allocated = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        with open(save_memory_profile, "w") as f:
+            f.write(f"{memory_allocated}")
 
 
 if __name__ == "__main__":
@@ -69,5 +88,6 @@ if __name__ == "__main__":
     parser.add_argument("--lr", type=float, default=0.03)
     parser.add_argument("--theta", type=float, default=2.)
     parser.add_argument("--device", type=str, default="cpu")
+    parser.add_argument("--save_memory_profile", type=str, default=None)
     args = parser.parse_args()
     train(**vars(args))
