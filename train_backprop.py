@@ -3,9 +3,8 @@ import resource
 
 import torch
 import torch.utils.data
+from forward_forward.utils.modules import FCNetFFProgressive
 from torchvision import datasets, transforms
-
-from efficientff.modules import FCNetFFProgressive
 
 
 def get_dataloader(batch_size: int):

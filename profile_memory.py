@@ -8,8 +8,8 @@ from pathlib import Path
 def profile_per_num_layers(n_layers: int):
     hidden_size = 2000
     lr = 0.03
-    device = "cuda:0"
-    # device = "cpu"
+    # device = "cuda:0"
+    device = "cpu"
     epochs = 1
     batch_size = 5000
     theta = 2.0
@@ -96,40 +96,6 @@ def profile_per_num_layers(n_layers: int):
     print("RESULTS ON MEMORY CONSUMPTION")
     print(profiled_values)
     return profiled_values
-    # run_backprop_mnist(
-    #     n_layers=n_layers,
-    #     hidden_size=hidden_size,
-    #     lr=lr,
-    #     device=device,
-    #     epochs=epochs,
-    #     batch_size=batch_size,
-    # )
-    # reporter_ff = MemReporter(train_ff_mnist)
-    # train_ff_mnist(
-    #     n_layers=n_layers,
-    #     hidden_size=hidden_size,
-    #     lr=lr,
-    #     optimizer_name="Adam",
-    #     loss_fn_name="alternative_loss_fn",
-    #     device=device,
-    #     epochs=epochs,
-    #     batch_size=batch_size,
-    #     theta=theta
-    # )
-    # reporter_recurrent = MemReporter(train_recurrent_mnist)
-    # train_recurrent_mnist(
-    #     n_layers=n_layers,
-    #     hidden_size=hidden_size,
-    #     lr=lr,
-    #     loss_fn="alternative_loss_fn",
-    #     device=device,
-    #     epochs=epochs,
-    #     batch_size=batch_size,
-    #     theta=theta
-    # )
-    # reporter_backprop.report()
-    # reporter_ff.report()
-    # reporter_recurrent.report()
 
 
 def main(max_layers: int):

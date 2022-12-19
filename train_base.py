@@ -2,76 +2,32 @@ import resource
 
 import torch
 import torch.utils.data
-from torchvision import datasets, transforms
-
-from efficientff.labels import LabelsInjector
-from efficientff.modules import FCNetFFProgressive
-from efficientff.utils import ProgressiveTrainingDataset
-
-
-def get_dataloader(batch_size: int):
-    batch_size = batch_size // 2  # we will double the batch size to include negative examples
-    # Load data
-    train_loader = torch.utils.data.DataLoader(
-        datasets.MNIST('data', train=True, download=True,
-                       transform=transforms.Compose([
-                           transforms.ToTensor(),
-                           transforms.Normalize((0.1307,), (0.3081,))
-                       ])),
-        batch_size=batch_size, shuffle=True)
-    test_loader = torch.utils.data.DataLoader(
-        datasets.MNIST('data', train=False, transform=transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.1307,), (0.3081,))
-        ])),
-        batch_size=1, shuffle=True)
-    return train_loader, test_loader
+from forward_forward import train_with_forward_forward_algorithm
 
 
 def train(
         n_layers: int,
         hidden_size: int,
-        optimizer_name: str,
         lr: float,
         device: str,
         epochs: int,
         batch_size: int,
         theta: float,
-        loss_fn_name: str,
         save_memory_profile: str = None,
 ):
     """Train FCNetFF using MNISt dataset.
     """
-    input_len = 28 * 28 + len(
-        datasets.MNIST.classes)  # MNIST image size + number of classes
-    train_loader, test_loader = get_dataloader(batch_size)
-    # Define model
-    model = FCNetFFProgressive([input_len] + [hidden_size] * n_layers, optimizer_name, {"lr": lr}, epochs, loss_fn_name)
-    model.to(device)
-    label_injector = LabelsInjector(datasets.MNIST.classes)
-
-    progressive_dataset = ProgressiveTrainingDataset((label_injector.inject_train(x, y) for x, y in train_loader))
-    progressive_dataloader = torch.utils.data.DataLoader(progressive_dataset, batch_size=batch_size, shuffle=False)
-
-    model.train()
-    model.progressive_train(progressive_dataloader, theta)
-
-    model.eval()
-    correct = 0
-    with torch.no_grad():
-        for data, target in test_loader:
-            input_data = label_injector.inject_eval(data)
-            input_data = input_data.to(device)
-            target = target.to(device)
-            _, prob = model.positive_eval(input_data, theta)
-            pred = prob.argmax(dim=0)
-            correct += pred == target
-    if isinstance(correct, torch.Tensor):
-        correct = correct.item()
-    print('Test set: Accuracy: {}/{} ({:.0f}%)'.format(
-        correct, len(test_loader.dataset),
-        100. * correct / len(test_loader.dataset)))
-
+    batch_size = batch_size // 2  # we will double the batch size to include negative examples
+    train_with_forward_forward_algorithm(
+        model_type="progressive",
+        n_layers=n_layers,
+        hidden_size=hidden_size,
+        lr=lr,
+        device=device,
+        epochs=epochs,
+        batch_size=batch_size,
+        theta=theta,
+    )
     if save_memory_profile is not None:
         if torch.cuda.is_available() and "cuda" in device:
             memory_allocated = torch.cuda.max_memory_allocated(device=device)
@@ -89,8 +45,6 @@ if __name__ == '__main__':
                         help='number of hidden layers')
     parser.add_argument('--hidden_size', type=int, default=100,
                         help='number of hidden units')
-    parser.add_argument('--optimizer_name', type=str, default="Adam",
-                        help='optimizer name')
     parser.add_argument('--lr', type=float, default=0.01,
                         help='learning rate')
     parser.add_argument('--device', type=str, default="cpu",
@@ -101,7 +55,6 @@ if __name__ == '__main__':
                         help='batch size')
     parser.add_argument('--theta', type=float, default=2.,
                         help='theta parameter')
-    parser.add_argument("--loss_fn_name", type=str, default="loss_fn")
     parser.add_argument("--save_memory_profile", type=str, default=None)
     args = parser.parse_args()
     train(**vars(args))
