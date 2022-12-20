@@ -8,8 +8,8 @@ from pathlib import Path
 def profile_per_num_layers(n_layers: int):
     hidden_size = 2000
     lr = 0.03
-    # device = "cuda:0"
-    device = "cpu"
+    device = "cuda:0"
+    # device = "cpu"
     epochs = 1
     batch_size = 5000
     theta = 2.0
@@ -110,6 +110,6 @@ def main(max_layers: int):
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--max_layers", type=int, default=10)
+    parser.add_argument("--max_layers", type=int, default=50)
     args = parser.parse_args()
     main(args.max_layers)
