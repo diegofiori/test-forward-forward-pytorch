@@ -34,6 +34,6 @@ The results will be stored in a json file that can be analysed using the attache
 
 As shown in the figure below the memory usage of the forward-forward algorithm is significantly lower than the one of the backpropagation algorithm for deeper models. The memory usage of the forward-forward algorithm is still increases respect to the number of layers, but significantly less respect to the backpropagation algorithm. This is due to the fact that the increase in memory usage for forward-forward algorithm is related just to the number of parameters of the network, while for the backpropagation algorithm the memory usage is related to the number of parameters and the number of layers (since activations must be saved for computing the gradients).
 
-![memory_usage](memory_usage.png)
+![histogram](https://user-images.githubusercontent.com/38586138/208696596-45a8d0e2-c682-4f69-8e89-399bb1fb8bbf.png)
 
 Actually, the Forward-Forward algorithm could in practice be further optimized, since it is not necessary to load the full network while training. In fact, the Forward-Forward algorithm can be used to train each layer of the network separately, meaning that the memory usage of the algorithm would be related just to the number of parameters of the layer being trained.
